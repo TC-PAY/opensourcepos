@@ -103,10 +103,18 @@ PY
   echo "created .env"
 fi
 chown www-data:www-data "$DEST/.env"; chmod 640 "$DEST/.env"
-# On a brand-new install env:provision writes the key, then errors because the
-# settings table does not exist yet. What matters is that the key was written.
-( cd "$DEST" && sudo -u www-data php spark env:provision >/dev/null 2>&1 )
-grep -qE "^encryption\.key='?[0-9a-f]{64}'?\s*$" "$DEST/.env" || fail "encryption key was not provisioned"
+# env:provision writes .env through a temporary file in the same folder, so it
+# needs write access to $DEST (owned by root): run it as root, then hand .env back
+# to www-data. On a brand-new install it writes the key and then errors because
+# the settings table does not exist yet; what matters is that the key was written.
+PROVISION_OUT=$(cd "$DEST" && php spark env:provision 2>&1)
+chown www-data:www-data "$DEST/.env"; chmod 640 "$DEST/.env"
+[ -f "$DEST/.env.lock" ] && chown www-data:www-data "$DEST/.env.lock"
+rm -f "$DEST"/.env.tmp.* 2>/dev/null
+if ! grep -qE "^encryption\.key\s*=\s*'?(hex2bin:)?[0-9a-f]{64}'?\s*$" "$DEST/.env"; then
+  echo "$PROVISION_OUT" | sed -E 's/[0-9a-f]{32,}/<redacted>/g' | grep -v '^#[0-9]' | tail -8
+  fail "encryption key was not provisioned"
+fi
 echo ".env ready (encryption key provisioned)"
 
 say "4. Nginx site on 127.0.0.1:$PORT"
