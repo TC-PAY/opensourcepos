@@ -31,6 +31,7 @@ fail() { printf '\nSTOPPED: %s\n' "$*"; exit 1; }
 json() { python3 -c "import sys,json
 try: d=json.load(sys.stdin)
 except Exception: print(''); sys.exit()
+if not isinstance(d, dict): print(''); sys.exit()
 print($1)"; }
 
 [ "$(id -u)" = 0 ] || fail "run as root"
@@ -42,6 +43,16 @@ SANDBOX_KEY=$(sed -n 's/^TCPAY_SANDBOX_API_KEY=//p' "$KEYFILE")
 [ -n "$SANDBOX_KEY" ] || fail "no sandbox key in $KEYFILE"
 export MYSQL_PWD="$OSPOS_PASS"
 SQL() { mariadb -u"$OSPOS_USER" "$OSPOS_DB" -N -e "$1"; }
+
+# Explains a failed till call: HTTP status, the start of the response (secrets
+# redacted) and OSPOS's own recent errors.
+explain() { # $1 label, $2 response file
+  echo "--- $1: HTTP $(tail -n1 "$2") ---"
+  sed '$d' "$2" | head -c 600 | sed -E 's/(sandbox|live)_tc_[A-Za-z0-9]+/<key>/g; s/[0-9a-f]{40,}/<redacted>/g'
+  echo; echo "--- OSPOS log (latest errors) ---"
+  grep -hE "^(CRITICAL|ERROR|ALERT|EMERGENCY)" "$DEST"/writable/logs/log-*.log 2>/dev/null | tail -6 | cut -c1-400 \
+    | sed -E 's/(sandbox|live)_tc_[A-Za-z0-9]+/<key>/g'
+}
 
 say "1. Prerequisites"
 PHP_MODULES=$(php -m)
@@ -189,9 +200,11 @@ fi
 post() { curl -s -c "$JAR" -b "$JAR" -H 'X-Requested-With: XMLHttpRequest' --data-urlencode "csrf_ospos_v4=$TOKEN" "$@"; }
 curl -s -o /dev/null -c "$JAR" -b "$JAR" "$BASE/sales"
 post -o /dev/null -d "item=$ITEM_ID" "$BASE/sales/add"
-R=$(post -d "amount=49.95&request_id=$(openssl rand -hex 16)" "$BASE/tcpay/create")
+RESP=$(mktemp)
+post -o "$RESP" -w '\n%{http_code}' -d "amount=49.95&request_id=$(openssl rand -hex 16)" "$BASE/tcpay/create"
+R=$(sed '$d' "$RESP")
 ID=$(echo "$R" | json "d.get('id','')")
-[ -n "$ID" ] || fail "TC Pay create failed: $R"
+[ -n "$ID" ] || { explain "tcpay/create" "$RESP"; fail "TC Pay create failed"; }
 echo "TC Pay intent $(echo "$R" | json "d['reference'] + ' ' + d['amount'] + ' ' + d['status']")"
 R=$(post -d "outcome=success" "$BASE/tcpay/simulate/$ID")
 echo "simulate payment -> $(echo "$R" | json "d.get('status')"), in cart: $(echo "$R" | json "d.get('in_cart')")"
