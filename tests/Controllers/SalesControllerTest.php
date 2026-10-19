@@ -871,8 +871,9 @@ class SalesControllerTest extends CIUnitTestCase
         $this->seedCartLine(1, '100.00', $this->createTestItem(HAS_NO_STOCK));
         $intent = $this->payCartWithTcpay('100.00');
 
-        $this->post('/sales/complete');
+        $response = $this->post('/sales/complete');
 
+        $response->assertSee('TC Pay ' . $intent['reference']);
         $rows = $this->tcpayPaymentRows($intent['reference']);
         $this->assertCount(1, $rows);
         $this->assertSame(0, bccomp((string) $rows[0]['payment_amount'], '100.00', 2));
