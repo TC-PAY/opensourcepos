@@ -89,6 +89,11 @@ rsync -a --ignore-existing "$SRC"/writable/ "$DEST"/writable/
 git -C "$SRC" checkout -q -- app/Views/partial/header.php app/Views/login.php app/Views/configs/manage.php
 chown -R www-data:www-data "$DEST/writable"
 find "$DEST" -path "$DEST/writable" -prune -o -type d -exec chmod 755 {} + ; find "$DEST" -path "$DEST/writable" -prune -o -type f -exec chmod 644 {} +
+# What OSPOS's own permission check (Office > Configuration > Setup & Conf) expects:
+# web-server-owned upload and log folders at 750, the import template at 640.
+chown -R www-data:www-data "$DEST/public/uploads"
+chmod 750 "$DEST/writable/logs" "$DEST/public/uploads" "$DEST/public/uploads/item_pics"
+[ -f "$DEST/writable/uploads/importCustomers.csv" ] && chmod 640 "$DEST/writable/uploads/importCustomers.csv"
 
 if [ ! -f "$DEST/.env" ]; then
   cp "$DEST/.env.example" "$DEST/.env"
