@@ -65,6 +65,18 @@ class Tcpay extends Secure_Controller
         return $this->response->setJSON($this->present($created['intent']));
     }
 
+    /**
+     * Keeps TC Pay selected in the register's payment type list when the page
+     * reloads (OSPOS otherwise falls back to the first type, Cash).
+     */
+    public function postSelect(): ResponseInterface
+    {
+        $selected = $this->tcpayLib->isEnabled() && $this->request->getPost('selected') === '1';
+        $this->saleLib->set_payment_type($selected ? Tcpay_lib::PAYMENT_TYPE : '');
+
+        return $this->response->setJSON(['selected' => $selected]);
+    }
+
     public function getStatus(string $intentId = ''): ResponseInterface
     {
         $intent = $this->tcpayLib->ownIntent($intentId);

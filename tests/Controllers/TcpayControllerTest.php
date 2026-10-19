@@ -320,6 +320,54 @@ final class TcpayControllerTest extends CIUnitTestCase
         $this->assertContains($intent['reference'], $references);
     }
 
+    public function testPostSelectRemembersTcpayAsPaymentType(): void
+    {
+        $this->startSale();
+
+        $this->post('/tcpay/select', ['selected' => '1']);
+        $this->nextRequest();
+        $this->assertSame(Tcpay_lib::PAYMENT_TYPE, Services::session()->get('payment_type'));
+
+        $this->post('/tcpay/select', ['selected' => '0']);
+        $this->nextRequest();
+        $this->assertSame('', Services::session()->get('payment_type'));
+    }
+
+    public function testPostSelectRejectsWhenDisabled(): void
+    {
+        $this->configureTcpay(['tcpay_enabled' => '0']);
+        $this->startSale();
+
+        $this->post('/tcpay/select', ['selected' => '1']);
+        $this->nextRequest();
+
+        $this->assertSame('', Services::session()->get('payment_type'));
+    }
+
+    public function testGetIndexKeepsTcpaySelectedAfterReload(): void
+    {
+        $this->startSale();
+        $this->post('/tcpay/select', ['selected' => '1']);
+        $this->nextRequest();
+
+        $response = $this->get('/sales');
+
+        $this->assertStringContainsString('<option value="' . Tcpay_lib::PAYMENT_TYPE . '" selected>', $response->getBody());
+    }
+
+    public function testPostSimulateClearsTcpaySelectionOncePaid(): void
+    {
+        $this->startSale();
+        $this->post('/tcpay/select', ['selected' => '1']);
+        $this->nextRequest();
+        $intent = $this->createIntent('25.50');
+
+        $this->post('/tcpay/simulate/' . $intent['id'], ['outcome' => 'success']);
+        $this->nextRequest();
+
+        $this->assertSame('', Services::session()->get('payment_type'));
+    }
+
     public function testPostCreateRequiresSalesPermission(): void
     {
         $noSalesId = $this->createEmployee(grants: [['permission_id' => 'customers', 'menu_group' => 'home']]);

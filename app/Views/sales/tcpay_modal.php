@@ -54,6 +54,7 @@ use App\Libraries\Tcpay_lib;
             simulate: <?= json_encode(site_url('tcpay/simulate')) ?>,
             cancel: <?= json_encode(site_url('tcpay/cancel')) ?>,
             unattached: <?= json_encode(site_url('tcpay/unattached')) ?>,
+            select: <?= json_encode(site_url('tcpay/select')) ?>,
             register: <?= json_encode(site_url('sales')) ?>
         };
         const text = {
@@ -178,6 +179,10 @@ use App\Libraries\Tcpay_lib;
             } else {
                 $('#tcpay_modal').modal('hide');
             }
+        });
+
+        $('#payment_types').on('change', function() {
+            $.post(urls.select, { selected: $(this).val() === paymentType ? '1' : '0' });
         });
 
         $.getJSON(urls.unattached).done(function(rows) {

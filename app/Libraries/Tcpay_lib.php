@@ -238,6 +238,8 @@ class Tcpay_lib
                 bcdiv((string) $current['amount_cents'], '100', 2),
                 $current['reference'],
             );
+            // Any remainder of a split payment is usually paid another way.
+            $saleLib->set_payment_type('');
             $current = $this->intents->getIntent($intent['intent_id']);
         }
 
