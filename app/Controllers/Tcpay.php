@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Libraries\Sale_lib;
+use App\Libraries\Tax_lib;
 use App\Libraries\Tcpay_lib;
 use App\Models\Tcpay_intent;
 use CodeIgniter\HTTP\ResponseInterface;
@@ -21,6 +22,11 @@ class Tcpay extends Secure_Controller
     public function __construct()
     {
         parent::__construct('sales');
+
+        // Sale_lib refers to Tax_lib under its lower-case "app\Libraries" namespace, which the
+        // autoloader cannot map to a file on a case-sensitive filesystem. Load it by its real
+        // name first, as the Sales controller does.
+        class_exists(Tax_lib::class);
 
         $this->saleLib  = new Sale_lib();
         $this->tcpayLib = new Tcpay_lib();
