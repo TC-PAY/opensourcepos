@@ -174,7 +174,7 @@ fi
 set -a; . "$ENVFILE"; set +a
 
 say "6. Store currency ZAR"
-SQL "UPDATE ospos_app_config SET value='ZAR' WHERE \`key\`='currency_code'; UPDATE ospos_app_config SET value='R' WHERE \`key\`='currency_symbol'"
+SQL "UPDATE ospos_app_config SET value='ZAR' WHERE \`key\`='currency_code'; UPDATE ospos_app_config SET value='R' WHERE \`key\`='currency_symbol'; UPDATE ospos_app_config SET value='Africa/Johannesburg' WHERE \`key\`='timezone'"
 rm -f "$DEST"/writable/cache/settings* 2>/dev/null
 echo "currency: $(SQL "SELECT value FROM ospos_app_config WHERE \`key\`='currency_code'")"
 
