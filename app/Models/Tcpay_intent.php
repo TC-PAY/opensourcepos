@@ -57,6 +57,11 @@ class Tcpay_intent extends Model
         ]);
     }
 
+    public function lastError(): array
+    {
+        return $this->db->error();
+    }
+
     /**
      * Moves an open intent to a final status. True only for the caller that
      * actually changed it, so concurrent polls apply the result once.

@@ -113,6 +113,12 @@ open(path, 'w').write(s.replace("CI_ENVIRONMENT='production'", "CI_ENVIRONMENT=p
 PY
   echo "created .env"
 fi
+# OSPOS's .env.example turns logging off (threshold 0); keep errors (level 4) so failures can be diagnosed.
+if grep -qE '^logger\.threshold\s*=' "$DEST/.env"; then
+  sed -i -E 's/^logger\.threshold\s*=.*/logger.threshold=4/' "$DEST/.env"
+else
+  echo 'logger.threshold=4' >> "$DEST/.env"
+fi
 chown www-data:www-data "$DEST/.env"; chmod 640 "$DEST/.env"
 # env:provision writes .env through a temporary file in the same folder, so it
 # needs write access to $DEST (owned by root): run it as root, then hand .env back

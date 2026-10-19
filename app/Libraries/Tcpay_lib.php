@@ -144,7 +144,15 @@ class Tcpay_lib
             'employee_id'   => $employeeId,
         ]);
 
-        return ['intent' => $this->intents->getIntent((string) $remote['id']), 'remote' => $remote];
+        $stored = $this->intents->getIntent((string) $remote['id']);
+        if ($stored === null) {
+            // The intent exists at TC Pay but not here; nothing reaches the cart without this row.
+            log_message('error', 'TC Pay intent ' . $remote['id'] . ' could not be stored: ' . json_encode($this->intents->lastError()));
+
+            throw new PaymentIntentsException(lang('Tcpay.error_rejected'), 0, 'STORE');
+        }
+
+        return ['intent' => $stored, 'remote' => $remote];
     }
 
     /**
