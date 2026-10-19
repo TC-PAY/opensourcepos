@@ -37,6 +37,9 @@
  * @var float $non_cash_total
  * @var float $cash_amount_due
  * @var array $config
+ * @var bool $tcpay_enabled
+ * @var bool $tcpay_test_buttons
+ * @var string $tcpay_environment
  */
 
 use App\Models\Employee;
@@ -807,6 +810,10 @@ helper('url');
         });
 
         $('#add_payment_button').click(function() {
+            if (typeof tcpayPayment !== 'undefined' && tcpayPayment.handles($('#payment_types').val())) {
+                tcpayPayment.open($('#amount_tendered').val());
+                return;
+            }
             $('#add_payment_form').find('input[name="complete_after_payment"]').val('0');
             $('#add_payment_form').submit();
         });
@@ -821,6 +828,11 @@ helper('url');
 
         $('#amount_tendered').keypress(function(event) {
             if (event.which == 13) {
+                if (typeof tcpayPayment !== 'undefined' && tcpayPayment.handles($('#payment_types').val())) {
+                    event.preventDefault();
+                    tcpayPayment.open($('#amount_tendered').val());
+                    return;
+                }
                 $('#add_payment_form').submit();
             }
         });
@@ -961,5 +973,9 @@ helper('url');
         }
     }
 </script>
+
+<?php if (!empty($tcpay_enabled)): ?>
+    <?= view('sales/tcpay_modal', ['tcpay_test_buttons' => $tcpay_test_buttons, 'tcpay_environment' => $tcpay_environment]) ?>
+<?php endif; ?>
 
 <?= view('partial/footer') ?>

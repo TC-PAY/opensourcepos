@@ -6,6 +6,7 @@ use App\Libraries\Barcode_lib;
 use App\Libraries\Email_lib;
 use App\Libraries\Sale_lib;
 use App\Libraries\Tax_lib;
+use App\Libraries\Tcpay_lib;
 use App\Libraries\Token_lib;
 use App\Models\Customer;
 use App\Models\Customer_rewards;
@@ -414,6 +415,12 @@ class Sales extends Secure_Controller
             return $this->reload($data);
         }
 
+        if (Tcpay_lib::isTcpayPaymentType($paymentType)) {
+            $data['error'] = lang('Tcpay.error_use_payment_window');
+
+            return $this->reload($data);
+        }
+
         if (
             $paymentType !== lang('Sales.giftcard')
             && $paymentType !== lang('Sales.rewards')
@@ -546,7 +553,13 @@ class Sales extends Secure_Controller
     {
         helper('url');
 
-        $this->sale_lib->delete_payment(base64url_decode($payment_id));
+        $decodedPaymentId = base64url_decode($payment_id);
+
+        if (Tcpay_lib::isTcpayPaymentType(urldecode($decodedPaymentId))) {
+            return $this->reload(['error' => lang('Tcpay.error_cannot_remove')]);
+        }
+
+        $this->sale_lib->delete_payment($decodedPaymentId);
 
         return $this->reload();
     }
@@ -806,6 +819,12 @@ class Sales extends Secure_Controller
         $data['taxes'] = $taxDetails[0];
         $data['discount'] = $this->sale_lib->get_discount();
         $data['payments'] = $this->sale_lib->getPayments();
+
+        $tcpayError = (new Tcpay_lib())->verifyCartPayments($data['payments']);
+        if ($tcpayError !== null) {
+            $data['error'] = $tcpayError;
+            return $this->reload($data);
+        }
 
         // Returns 'subtotal', 'total', 'cash_total', 'payment_total', 'amount_due', 'cash_amount_due', 'payments_cover_total'
         $totals = $this->sale_lib->get_totals($taxDetails[0]);
@@ -1373,6 +1392,14 @@ class Sales extends Secure_Controller
             $data['payment_options'] = $this->sale->get_payment_options();
         }
 
+        $tcpayLib = new Tcpay_lib();
+        $data['tcpay_enabled'] = $tcpayLib->isEnabled() && $this->sale_lib->get_mode() !== 'return';
+        $data['tcpay_test_buttons'] = $tcpayLib->testButtonsEnabled();
+        $data['tcpay_environment'] = $tcpayLib->environment();
+        if ($data['tcpay_enabled']) {
+            $data['payment_options'][Tcpay_lib::PAYMENT_TYPE] = Tcpay_lib::PAYMENT_TYPE;
+        }
+
         $data['reference_code_payment_types'] = get_reference_code_payment_types();
 
         $data['items_module_allowed'] = $this->employee->has_grant('items', $this->employee->get_logged_in_employee_info()->person_id);
@@ -1628,6 +1655,11 @@ class Sales extends Secure_Controller
             }
         }
 
+        $tcpayError = $this->tcpayEditError($saleId);
+        if ($tcpayError !== null) {
+            return $this->response->setJSON(['success' => false, 'message' => $tcpayError, 'id' => $saleId]);
+        }
+
         // In order to maintain tradition the only element that can change on prior payments is the payment type
         $amountTendered = 0;
         $numberOfPayments = $this->request->getPost('number_of_payments', FILTER_SANITIZE_NUMBER_INT);
@@ -1713,8 +1745,53 @@ class Sales extends Secure_Controller
      * @throws ReflectionException
      * @noinspection PhpUnused
      */
+    /**
+     * A TC Pay payment on a saved sale records money TC Pay confirmed, so its
+     * type and amount cannot be changed or removed here, and no TC Pay payment
+     * can be typed in by hand.
+     */
+    private function tcpayEditError(int $saleId): ?string
+    {
+        $existing = [];
+        foreach ($this->sale->get_sale_payments($saleId)->getResultArray() as $row) {
+            $existing[(int) $row['payment_id']] = $row;
+        }
+
+        $numberOfPayments = (int) $this->request->getPost('number_of_payments', FILTER_SANITIZE_NUMBER_INT);
+        for ($i = 0; $i < $numberOfPayments; ++$i) {
+            $paymentId = (int) $this->request->getPost("payment_id_$i", FILTER_SANITIZE_NUMBER_INT);
+            $postedType = (string) $this->request->getPost("payment_type_$i", FILTER_SANITIZE_FULL_SPECIAL_CHARS);
+            $postedAmount = parse_decimals((string) $this->request->getPost("payment_amount_$i"));
+            $postedRefund = parse_decimals((string) $this->request->getPost("refund_amount_$i"));
+            $before = $existing[$paymentId] ?? null;
+            $wasTcpay = $before !== null && Tcpay_lib::isTcpayPaymentType($before['payment_type']);
+
+            if ($wasTcpay && (
+                $postedType !== $before['payment_type']
+                || bccomp((string) $postedAmount, (string) $before['payment_amount'], 2) !== 0
+                || bccomp((string) ($postedRefund ?: 0), '0', 2) !== 0
+            )) {
+                return lang('Tcpay.error_edit_locked');
+            }
+
+            if (!$wasTcpay && Tcpay_lib::isTcpayPaymentType($postedType)) {
+                return lang('Tcpay.error_use_payment_window');
+            }
+        }
+
+        if (Tcpay_lib::isTcpayPaymentType((string) $this->request->getPost('payment_type_new', FILTER_SANITIZE_FULL_SPECIAL_CHARS))) {
+            return lang('Tcpay.error_use_payment_window');
+        }
+
+        return null;
+    }
+
     public function postCancel(): ResponseInterface|string
     {
+        if (Tcpay_lib::cartHasTcpayPayment($this->sale_lib->getPayments())) {
+            return $this->reload(['error' => lang('Tcpay.error_cannot_cancel')]);
+        }
+
         $sale_id = $this->sale_lib->get_sale_id();
         if ($sale_id != NEW_ENTRY && $sale_id != '') {
             $sale_type = $this->sale_lib->getSaleType();
@@ -1762,6 +1839,10 @@ class Sales extends Secure_Controller
      */
     public function postSuspend(): ResponseInterface|string
     {
+        if (Tcpay_lib::cartHasTcpayPayment($this->sale_lib->getPayments())) {
+            return $this->reload(['error' => lang('Tcpay.error_cannot_suspend')]);
+        }
+
         $sale_id = $this->sale_lib->get_sale_id();
         $dinner_table = $this->sale_lib->get_dinner_table();
         $cart = $this->sale_lib->get_cart();

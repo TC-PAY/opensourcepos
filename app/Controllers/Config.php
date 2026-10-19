@@ -7,6 +7,7 @@ use App\Libraries\Mailchimp_lib;
 use App\Libraries\Receiving_lib;
 use App\Libraries\Sale_lib;
 use App\Libraries\Tax_lib;
+use App\Libraries\Tcpay_lib;
 use App\Models\Appconfig;
 use App\Models\Attribute;
 use App\Models\Customer_rewards;
@@ -25,6 +26,8 @@ use Config\Services;
 use DirectoryIterator;
 use NumberFormatter;
 use ReflectionException;
+use TCPay\PaymentIntentsClient;
+use TCPay\PaymentIntentsException;
 
 class Config extends Secure_Controller
 {
@@ -292,6 +295,16 @@ class Config extends Secure_Controller
         }
 
         $data['mailchimp']['lists'] = $this->_mailchimp();
+
+        $data['tcpay'] = [
+            'enabled'         => ($this->config['tcpay_enabled'] ?? '0') === '1',
+            'environment'     => ($this->config['tcpay_environment'] ?? 'sandbox') === 'live' ? 'live' : 'sandbox',
+            'api_url'         => (string) ($this->config['tcpay_api_url'] ?? PaymentIntentsClient::DEFAULT_BASE_URL),
+            'sandbox_key_set' => !empty($this->config['tcpay_sandbox_key']),
+            'live_key_set'    => !empty($this->config['tcpay_live_key']),
+            'test_buttons'    => ($this->config['tcpay_test_buttons'] ?? '1') === '1',
+            'expiry_minutes'  => (int) ($this->config['tcpay_expiry_minutes'] ?? 15),
+        ];
 
         return view('configs/manage', $data);
     }
@@ -697,6 +710,78 @@ class Config extends Secure_Controller
         $success = $this->appconfig->batch_save($batch_save_data);
 
         return $this->response->setJSON(['success' => $success, 'message' => lang('Config.saved_' . ($success ? '' : 'un') . 'successfully')]);
+    }
+
+    /**
+     * Saves TC Pay configuration. Used in app/Views/configs/tcpay_config.php.
+     * Blank key fields keep the stored (encrypted) keys.
+     */
+    public function postSaveTcpay(): ResponseInterface
+    {
+        $environment = $this->request->getPost('tcpay_environment') === 'live' ? 'live' : 'sandbox';
+        $enabled = $this->request->getPost('tcpay_enabled') !== null;
+        $sandboxKey = trim((string) $this->request->getPost('tcpay_sandbox_key'));
+        $liveKey = trim((string) $this->request->getPost('tcpay_live_key'));
+        $apiUrl = rtrim(trim((string) $this->request->getPost('tcpay_api_url')), '/') ?: PaymentIntentsClient::DEFAULT_BASE_URL;
+        $expiry = (int) $this->request->getPost('tcpay_expiry_minutes');
+
+        $error = match (true) {
+            $sandboxKey !== '' && PaymentIntentsClient::environmentOf($sandboxKey) !== 'sandbox'                         => lang('Tcpay.error_key_sandbox'),
+            $liveKey !== '' && PaymentIntentsClient::environmentOf($liveKey) !== 'live'                                   => lang('Tcpay.error_key_live'),
+            !preg_match('#^https://#i', $apiUrl) && !preg_match('#^http://(127\.0\.0\.1|localhost)(:\d+)?/#i', $apiUrl . '/') => lang('Tcpay.error_api_url'),
+            $expiry < 5 || $expiry > 1440                                                                                 => lang('Tcpay.error_expiry'),
+            default                                                                                                       => null,
+        };
+
+        $storedKeyField = $environment === 'live' ? 'tcpay_live_key' : 'tcpay_sandbox_key';
+        $newActiveKey = $environment === 'live' ? $liveKey : $sandboxKey;
+        if ($error === null && $enabled && $newActiveKey === '' && empty($this->config[$storedKeyField])) {
+            $error = lang('Tcpay.error_key_required');
+        }
+
+        if ($error !== null) {
+            return $this->response->setJSON(['success' => false, 'message' => $error]);
+        }
+
+        $tcpayLib = new Tcpay_lib();
+        $saveData = [
+            'tcpay_enabled'        => $enabled ? '1' : '0',
+            'tcpay_environment'    => $environment,
+            'tcpay_api_url'        => $apiUrl,
+            'tcpay_test_buttons'   => $this->request->getPost('tcpay_test_buttons') !== null ? '1' : '0',
+            'tcpay_expiry_minutes' => (string) $expiry,
+        ];
+        if ($sandboxKey !== '') {
+            $saveData['tcpay_sandbox_key'] = $tcpayLib->encryptSecret($sandboxKey);
+        }
+        if ($liveKey !== '') {
+            $saveData['tcpay_live_key'] = $tcpayLib->encryptSecret($liveKey);
+        }
+
+        $success = $this->appconfig->batch_save($saveData);
+
+        return $this->response->setJSON(['success' => $success, 'message' => lang('Config.saved_' . ($success ? '' : 'un') . 'successfully')]);
+    }
+
+    /**
+     * Checks the saved key against TC Pay without creating anything: reading an
+     * intent that does not exist returns 404 for a valid key and 401 for a bad one.
+     */
+    public function postTestTcpay(): ResponseInterface
+    {
+        $tcpayLib = new Tcpay_lib();
+
+        try {
+            $tcpayLib->client()->get('00000000-0000-4000-8000-000000000000');
+            $success = true;
+        } catch (PaymentIntentsException $e) {
+            $success = $e->getHttpStatus() === 404;
+            if (!$success) {
+                return $this->response->setJSON(['success' => false, 'message' => lang('Tcpay.test_failed', [$e->getErrorCode() . ': ' . $e->getMessage()])]);
+            }
+        }
+
+        return $this->response->setJSON(['success' => $success, 'message' => lang('Tcpay.test_ok', [$tcpayLib->environment()])]);
     }
 
     /**
