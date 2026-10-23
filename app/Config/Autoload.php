@@ -166,7 +166,11 @@ class Autoload extends AutoloadConfig
         'Token_lib'     => '/App/Libraries/Token_lib.php',
 
         // Miscellaneous
-        'Rounding_mode' => '/App/Models/Enums/Rounding_mode.php'
+        'Rounding_mode' => '/App/Models/Enums/Rounding_mode.php',
+
+        // TC Pay payment-intents client (shared with TC Pay's other PHP integrations)
+        'TCPay\\PaymentIntentsClient'    => APPPATH . 'ThirdParty/TCPay/PaymentIntentsClient.php',
+        'TCPay\\PaymentIntentsException' => APPPATH . 'ThirdParty/TCPay/PaymentIntentsClient.php',
     ];
 
     /**

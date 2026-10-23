@@ -107,3 +107,5 @@
         }));
     });
 </script>
+
+<?= view('configs/tcpay_config') ?>

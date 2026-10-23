@@ -6,17 +6,33 @@ use CodeIgniter\Test\CIUnitTestCase;
 use CodeIgniter\Test\DatabaseTestTrait;
 use CodeIgniter\Test\FeatureTestTrait;
 use Tests\Support\TaxFixtureTrait;
+use Tests\Support\FakeTcpayServerTrait;
+use App\Models\Appconfig;
+use CodeIgniter\Config\Services;
 
 class ConfigTest extends CIUnitTestCase
 {
     use DatabaseTestTrait;
     use FeatureTestTrait;
     use TaxFixtureTrait;
+    use FakeTcpayServerTrait;
 
     protected $migrate     = true;
     protected $migrateOnce = true;
     protected $refresh     = false;
     protected $namespace   = null;
+
+    public static function setUpBeforeClass(): void
+    {
+        parent::setUpBeforeClass();
+        self::startFakeTcpay();
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        self::stopFakeTcpay();
+        parent::tearDownAfterClass();
+    }
 
     protected function setUp(): void
     {
@@ -441,5 +457,123 @@ class ConfigTest extends CIUnitTestCase
         $response->assertStatus(200);
         $result = json_decode($response->getJSON(), true);
         $this->assertTrue($result['success']);
+    }
+
+    // ========== TC Pay ==========
+
+    private function postTcpaySettings(array $overrides = []): array
+    {
+        $this->resetSession();
+        $response = $this->post('/config/saveTcpay', array_merge([
+            'tcpay_enabled'        => '1',
+            'tcpay_environment'    => 'sandbox',
+            'tcpay_sandbox_key'    => 'sandbox_tc_testkey',
+            'tcpay_live_key'       => '',
+            'tcpay_api_url'        => $this->fakeTcpayUrl(),
+            'tcpay_expiry_minutes' => '15',
+            'tcpay_test_buttons'   => '1',
+        ], $overrides));
+
+        return json_decode($response->getJSON(), true);
+    }
+
+    private function storedSetting(string $key): string
+    {
+        return (string) model(Appconfig::class)->get_value($key);
+    }
+
+    public function testPostSaveTcpay_RejectsLiveKeyInSandboxField(): void
+    {
+        $this->configureTcpay(['tcpay_enabled' => '0'], '');
+
+        $result = $this->postTcpaySettings(['tcpay_sandbox_key' => 'live_tc_wrongfield']);
+
+        $this->assertFalse($result['success']);
+        $this->assertSame(lang('Tcpay.error_key_sandbox'), $result['message']);
+    }
+
+    public function testPostSaveTcpay_RejectsPlainHttpApiUrl(): void
+    {
+        $this->configureTcpay(['tcpay_enabled' => '0'], '');
+
+        $result = $this->postTcpaySettings(['tcpay_api_url' => 'http://connector.example.com/api/v1/connector']);
+
+        $this->assertFalse($result['success']);
+        $this->assertSame(lang('Tcpay.error_api_url'), $result['message']);
+    }
+
+    public function testPostSaveTcpay_RequiresKeyBeforeEnabling(): void
+    {
+        $this->configureTcpay(['tcpay_enabled' => '0'], '');
+
+        $result = $this->postTcpaySettings(['tcpay_sandbox_key' => '']);
+
+        $this->assertFalse($result['success']);
+        $this->assertSame(lang('Tcpay.error_key_required'), $result['message']);
+    }
+
+    public function testPostSaveTcpay_StoresKeyEncrypted(): void
+    {
+        $this->configureTcpay(['tcpay_enabled' => '0'], '');
+
+        $result = $this->postTcpaySettings();
+
+        $this->assertTrue($result['success']);
+        $stored = $this->storedSetting('tcpay_sandbox_key');
+        $this->assertNotSame('', $stored);
+        $this->assertStringNotContainsString('sandbox_tc_testkey', $stored);
+        $this->assertSame('sandbox_tc_testkey', Services::encrypter()->decrypt($stored));
+    }
+
+    public function testPostSaveTcpay_KeepsStoredKeyWhenFieldBlank(): void
+    {
+        $this->configureTcpay();
+        $before = $this->storedSetting('tcpay_sandbox_key');
+
+        $result = $this->postTcpaySettings(['tcpay_sandbox_key' => '']);
+
+        $this->assertTrue($result['success']);
+        $this->assertSame($before, $this->storedSetting('tcpay_sandbox_key'));
+    }
+
+    public function testTcpayConfigView_DoesNotPrintStoredKey(): void
+    {
+        $this->configureTcpay();
+        helper('form');
+
+        $html = view('configs/tcpay_config', ['tcpay' => [
+            'enabled'         => true,
+            'environment'     => 'sandbox',
+            'api_url'         => $this->fakeTcpayUrl(),
+            'sandbox_key_set' => true,
+            'live_key_set'    => false,
+            'test_buttons'    => true,
+            'expiry_minutes'  => 15,
+        ], 'controller_name' => 'config']);
+
+        $this->assertStringContainsString('id="tcpay_config_form"', $html);
+        $this->assertStringContainsString(lang('Tcpay.key_saved'), $html);
+        $this->assertStringNotContainsString('sandbox_tc_testkey', $html);
+        $this->assertStringNotContainsString(esc($this->storedSetting('tcpay_sandbox_key')), $html);
+    }
+
+    public function testPostTestTcpay_AcceptsValidKey(): void
+    {
+        $this->configureTcpay();
+        $this->resetSession();
+
+        $result = json_decode($this->post('/config/testTcpay')->getJSON(), true);
+
+        $this->assertTrue($result['success']);
+    }
+
+    public function testPostTestTcpay_RejectsInvalidKey(): void
+    {
+        $this->configureTcpay([], 'sandbox_tc_invalid');
+        $this->resetSession();
+
+        $result = json_decode($this->post('/config/testTcpay')->getJSON(), true);
+
+        $this->assertFalse($result['success']);
     }
 }

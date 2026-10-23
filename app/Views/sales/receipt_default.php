@@ -15,6 +15,8 @@
  * @var string $barcode
  * @var array $config
  */
+
+use App\Libraries\Tcpay_lib;
 ?>
 
 <div id="receipt_wrapper" style="font-size: <?= $config['receipt_font_size'] ?>px;">
@@ -143,7 +145,7 @@
             $show_giftcard_remainder |= $splitpayment[0] == lang('Sales.giftcard');
         ?>
             <tr>
-                <td colspan="3" style="text-align: right;"><?= esc($splitpayment[0]) ?> </td>
+                <td colspan="3" style="text-align: right;"><?= esc(Tcpay_lib::isTcpayPaymentType($payment['payment_type']) ? Tcpay_lib::PAYMENT_TYPE . ' ' . ($splitpayment[1] ?? '') : $splitpayment[0]) ?> </td>
                 <td class="total-value"><?= to_currency($payment['payment_amount'] * -1) ?></td>
             </tr>
         <?php } ?>
